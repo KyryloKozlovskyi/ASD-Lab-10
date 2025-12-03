@@ -1,0 +1,159 @@
+Abstracted Database.java that encapsulates the complexity of the stream queries and the 
+implementation details of the database.
+
+package ie.atu.sw;
+
+import java.nio.file.Paths;
+import java.time.LocalDate;
+import java.util.*;
+import java.util.stream.Collectors;
+
+import one.microstream.storage.embedded.types.EmbeddedStorage;
+import one.microstream.storage.embedded.types.EmbeddedStorageManager;
+
+public class Database {
+    private EmbeddedStorageManager storageManager;
+    private List<Customer> customers;
+    
+    public Database(String dataPath) {
+        this.customers = new ArrayList<>();
+        this.storageManager = EmbeddedStorage.start(customers, Paths.get(dataPath));
+    }
+    
+    public void initialize(List<Customer> initialData) {
+        this.customers.addAll(initialData);
+        storageManager.storeRoot();
+    }
+    
+    public void shutdown() {
+        storageManager.shutdown();
+    }
+    
+    // Query Methods
+    public List<Customer> getAllCustomers() {
+        return new ArrayList<>(customers);
+    }
+    
+    public List<Customer> getCustomersByStatus(CustomerStatus status) {
+        return customers.stream()
+            .filter(c -> c.getStatus() == status)
+            .collect(Collectors.toList());
+    }
+    
+    public List<Customer> getCustomersSortedByName() {
+        return customers.stream()
+            .sorted(Comparator.comparing(Customer::getName))
+            .collect(Collectors.toList());
+    }
+    
+    public List<Customer> getCustomersWithNameStarting(String prefix) {
+        return customers.stream()
+            .filter(c -> c.getName().startsWith(prefix))
+            .sorted(Comparator.comparing(Customer::getName).reversed())
+            .collect(Collectors.toList());
+    }
+    
+    public List<Order> getOrdersAboveValue(double minValue) {
+        return customers.stream()
+            .flatMap(c -> c.orders().stream())
+            .filter(o -> o.total() > minValue)
+            .collect(Collectors.toList());
+    }
+    
+    public List<Item> getItemsWithNumberPrefix(String prefix) {
+        return customers.stream()
+            .flatMap(c -> c.orders().stream())
+            .flatMap(o -> Arrays.stream(o.items()))
+            .filter(i -> i.number().startsWith(prefix))
+            .collect(Collectors.toList());
+    }
+    
+    public List<Customer> getCustomersWithOrdersToCounty(County county) {
+        return customers.stream()
+            .filter(c -> c.orders().stream()
+                .anyMatch(o -> o.getShipTo().county() == county))
+            .collect(Collectors.toList());
+    }
+    
+    public Map<String, Double> getTotalOrderValuePerCustomer() {
+        return customers.stream()
+            .collect(Collectors.toMap(
+                Customer::getName,
+                c -> c.orders().stream()
+                    .mapToDouble(Order::total)
+                    .sum()
+            ));
+    }
+    
+    public List<Customer> getCustomersWithMultipleOrders() {
+        return customers.stream()
+            .filter(c -> c.size() > 1)
+            .collect(Collectors.toList());
+    }
+    
+    public Optional<Customer> getCustomerByNumber(String number) {
+        return customers.stream()
+            .filter(c -> c.getNumber().equalsIgnoreCase(number))
+            .findFirst();
+    }
+    
+    // Update Operations
+    public void updateCustomer(Customer customer) {
+        storageManager.store(customer);
+    }
+    
+    public void deleteAllCustomers() {
+        customers.clear();
+        storageManager.storeRoot();
+    }
+}
+
+
+Updated Runner.java to utilize the Database abstraction for queries and updates.
+
+package ie.atu.sw;
+
+import static java.lang.System.out;
+
+public class Runner {
+    private Database database;
+    
+    public void go() {
+        database = new Database("./data");
+        database.initialize(CustomerListFactory.getInstance().getCustomerList());
+        
+        query();
+        // update();
+        
+        database.shutdown();
+    }
+    
+    private void query() {
+        out.println("\n[Query 1] Show all customers");
+        database.getAllCustomers().forEach(out::println);
+        
+        out.println("\n[Query 10] Show all Customers with a status of RECURRING");
+        database.getCustomersByStatus(CustomerStatus.RECURRING).forEach(out::println);
+        
+        out.println("\n[Query 11] Show all Orders with a value of more than 1000");
+        database.getOrdersAboveValue(1000).forEach(out::println);
+        
+        out.println("\n[Query 12] Show all Order Items that start with QB-10");
+        database.getItemsWithNumberPrefix("QB-10").forEach(out::println);
+    }
+    
+    public void update() {
+        out.println("\n[Update] Modifying Customer c1");
+        database.getCustomerByNumber("c1").ifPresent(customer -> {
+            out.println(customer);
+            customer.setName("Patrick O'Neill");
+            out.println(customer);
+            database.updateCustomer(customer);
+        });
+    }
+    
+    public static void main(String[] args) {
+        new Runner().go();
+    }
+}
+
